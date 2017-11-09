@@ -91,19 +91,29 @@ const uniqueTerms = (local, remote) => {
   return xorBy(local, remote, 'term');
 };
 
-const addTerms = (terms: any[]) => {
+const addTermsToRemote = (terms: any[]) => {
   log(`Adding new terms to POEditor...`);
   if (terms.length === 0) return log(`No new terms to add`);
 
-  const termsList = [...terms].map(term => `  > ${term.term}`).join('\n');
-  log(termsList);
+  const termsForLog = [...terms].map(term => `  > ${term.term}`).join('\n');
+  log(termsForLog);
 
   return poconnect.terms.add(token, projectId, terms)
   .catch(error);
 };
 
+const addTermsToLocal = (newTerms: any[], localTerms: any) => {
+  return Object.keys(localTerms).map((language) => {
+    const terms = uniqBy([...localTerms[language], ...newTerms], 'term');
+    writeTranslationFile(language, terms);
+    return terms;
+  });
+};
+
 const sync = async () => {
   log(`Beginning sync...`);
+  const termsToWrite = {};
+
   try {
     const languages = await getLanguageCodes();
     const termsToAdd = [...languages].map(async (language) => {
@@ -111,8 +121,7 @@ const sync = async () => {
       const local = loadTranslationFile(language) || remote;
 
       const terms = await mergeTerms(local, remote);
-
-      const filePath = writeTranslationFile(language, terms);
+      termsToWrite[language] = terms;
 
       return uniqueTerms(local, remote);
     });
@@ -120,15 +129,16 @@ const sync = async () => {
     return Promise.all(termsToAdd)
     .then((t) => {
       const terms = uniqBy(flatten(t), 'term');
-      addTerms(terms);
+      addTermsToRemote(terms);
+      addTermsToLocal(terms, termsToWrite);
       log(`Sync complete`);
     }).catch(error);
 
   } catch (err) {
     return error(err);
   }
-
 };
+
 const init = (_token, _id, _translationsDir) => {
   token = _token;
   projectId = _id;
