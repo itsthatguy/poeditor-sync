@@ -1,9 +1,8 @@
 import { join, resolve } from 'path';
 import * as fs from 'fs-extra';
-import { inspect } from 'util';
 
 import * as poconnect from 'node-poeditor';
-import { differenceBy, flatten, flattenDeep, uniqBy, xorBy } from 'lodash';
+import { differenceBy, uniqBy, xorBy } from 'lodash';
 import axios from 'axios';
 import 'colors';
 
