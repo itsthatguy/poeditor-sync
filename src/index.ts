@@ -1,53 +1,40 @@
 import { join, resolve } from 'path';
 import * as fs from 'fs-extra';
+import { inspect } from 'util';
 
 import * as poconnect from 'node-poeditor';
-import { flatten, uniqBy, xorBy } from 'lodash';
+import { differenceBy, flatten, flattenDeep, uniqBy, xorBy } from 'lodash';
 import axios from 'axios';
 import 'colors';
 
 import { log, error } from './logger';
 
+const ROOT_DIR = resolve(__dirname, '..');
+let translationsDir = resolve(ROOT_DIR, 'lib/locales');
+
 let token;
 let projectId;
-let rootDir;
-let translationsDir;
+let dryRun = false;
 
 const prefix = 'poesync';
 
 const getLanguageCodes = () => {
-  return poconnect.languages.list(token, projectId)
-  .then(response => response.languages.map(lang => lang.code))
-  .catch(error);
+  return poconnect.languages
+    .list(token, projectId)
+    .then(response => response.languages.map(lang => ({ language: lang.code })))
+    .catch(error);
 };
 
-const getPoTermsForLanguage = (code) => {
-  return poconnect.terms.list(token, projectId, code)
+const getPoTermsForLanguage = code => {
+  return poconnect.terms
+    .list(token, projectId, code)
     .then(t => {
       return t.terms;
     })
     .catch(error);
 };
 
-const mergeTerms = (local, remote) => {
-  const finds = [];
-  const newTerms = local.reduce((result, value, i) => {
-    const found = remote.find(trans => trans.term === value.term);
-    if (found) result[i] = found;
-    else result[i] = value;
-
-    return result;
-  }, []);
-
-  return newTerms;
-};
-
-const updateTerms = (terms) => {
-  return poconnect.terms.update(token, projectId, terms)
-    .catch(error);
-};
-
-const getTermsForLanguage = async (language) => {
+const getTermsForLanguage = async language => {
   const options = { language, type: 'json' };
 
   try {
@@ -68,7 +55,7 @@ const loadTranslationFile = (language: string) => {
     if (require.resolve(filePath)) delete require.cache[filePath];
     return require(filePath);
   } catch (err) {
-    fs.outputFileSync(filePath, '');
+    if (dryRun) fs.outputFileSync(filePath, '');
     return false;
   }
 };
@@ -98,54 +85,110 @@ const addTermsToRemote = (terms: any[]) => {
   const termsForLog = [...terms].map(term => `  > ${term.term}`).join('\n');
   log(termsForLog);
 
-  return poconnect.terms.add(token, projectId, terms)
-  .catch(error);
+  return poconnect.terms.add(token, projectId, terms).catch(error);
 };
 
-const addTermsToLocal = (newTerms: any[], localTerms: any) => {
-  return Object.keys(localTerms).map((language) => {
-    const terms = uniqBy([...localTerms[language], ...newTerms], 'term');
-    writeTranslationFile(language, terms);
-    return terms;
-  });
-};
-
-const sync = async () => {
-  log(`Beginning sync...`);
-  const termsToWrite = {};
-
+export const getAllData = async () => {
   try {
     const languages = await getLanguageCodes();
-    const termsToAdd = [...languages].map(async (language) => {
-      const remote = await getTermsForLanguage(language);
-      const local = loadTranslationFile(language) || remote;
-
-      const terms = await mergeTerms(local, remote);
-      termsToWrite[language] = terms;
-
-      return uniqueTerms(local, remote);
+    const withTerms = await languages.map(async value => {
+      const remoteTerms = await getTermsForLanguage(value.language);
+      const localTerms = loadTranslationFile(value.language) || remoteTerms;
+      return {
+        ...value,
+        localTerms,
+        remoteTerms
+      };
     });
 
-    return Promise.all(termsToAdd)
-    .then((t) => {
-      const terms = uniqBy(flatten(t), 'term');
-      addTermsToRemote(terms);
-      addTermsToLocal(terms, termsToWrite);
-      log(`Sync complete`);
-    }).catch(error);
-
+    return Promise.all(withTerms).then(data => {
+      return data.map((value: any) => {
+        return {
+          ...value,
+          uniqueTerms: uniqueTerms(value.localTerms, value.remoteTerms)
+        };
+      });
+    });
   } catch (err) {
-    return error(err);
+    error(err);
   }
 };
 
-const init = (_token, _id, _translationsDir) => {
+const TERMS_TEMPLATE = {
+  term: null,
+  definition: null,
+  context: '',
+  term_plural: '',
+  reference: '',
+  comment: ''
+};
+
+const mergeTerms = (data, newTerms?) => {
+  return data.reduce((result, value) => {
+    const terms = uniqBy([...value.localTerms, ...value.remoteTerms], 'term');
+    const termsWithNewTerms = uniqBy([...terms, ...newTerms], 'term');
+
+    const newValue = {
+      ...value,
+      mergedTerms: termsWithNewTerms
+    };
+
+    return [...result, newValue];
+  }, []);
+};
+
+const sync = async () => {
+  log(`Syncing translations...`);
+  const data = await getAllData();
+
+  const newTerms = uniqBy(
+    data.reduce((result, value) => [...result, ...value.uniqueTerms], []),
+    'term'
+  );
+
+  const dataWithMergedTerms = mergeTerms(data, newTerms);
+
+  dataWithMergedTerms.forEach(value => {
+    writeTranslationFile(value.language, value.mergedTerms);
+  });
+
+  addTermsToRemote(newTerms);
+  log(`Syncing complete`);
+};
+
+export const checkForChanges = async () => {
+  log(`Checking for changes...`);
+  const data = await getAllData();
+  const differentTerms =
+    data.reduce(
+      (result, value) =>
+        differenceBy(value.localTerms, value.remoteTerms, 'term').length +
+        result,
+      0
+    ) > 0;
+  const newTerms =
+    data.reduce((result, value) => value.uniqueTerms.length + result, 0) > 0;
+
+  const hasChanges: number = +(differentTerms || newTerms);
+  if (hasChanges) {
+    error(
+      'Found changes in translation files, please run `poesync --token=[API_TOKEN] --id=[PROJECT_ID]` and re-commit'
+    );
+  } else {
+    log('No changes found');
+  }
+
+  return hasChanges;
+};
+
+const init = (write, _token, _id, _translationsDir?) => {
   token = _token;
   projectId = _id;
-  rootDir = resolve(__dirname, '..');
-  translationsDir = _translationsDir || resolve(rootDir, 'lib/locales');
+  translationsDir = _translationsDir || translationsDir;
+  dryRun = write;
 
-  sync();
+  if (write) sync();
+  else checkForChanges().then(process.exit);
 };
 
 export default init;
