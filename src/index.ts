@@ -169,7 +169,7 @@ export const checkForChanges = async () => {
   const newTerms =
     data.reduce((result, value) => value.uniqueTerms.length + result, 0) > 0;
 
-  const hasChanges: number = +(differentTerms || newTerms);
+  const hasChanges: boolean = differentTerms || newTerms;
   if (hasChanges) {
     error(
       'Found changes in translation files, please run `poesync --token=[API_TOKEN] --id=[PROJECT_ID]` and re-commit'
@@ -178,7 +178,7 @@ export const checkForChanges = async () => {
     log('No changes found');
   }
 
-  return hasChanges;
+  return +hasChanges;
 };
 
 const init = (write, _token, _id, _translationsDir?) => {
