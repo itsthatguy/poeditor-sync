@@ -5,11 +5,12 @@ import * as poconnect from 'node-poeditor';
 import { differenceBy, uniqBy, xorBy } from 'lodash';
 import axios from 'axios';
 import 'colors';
+import { realpathSync } from 'fs';
 
 import { log, error } from './logger';
 
-const ROOT_DIR = resolve(__dirname, '..');
-let translationsDir = resolve(ROOT_DIR, 'lib/locales');
+const APP_ROOT = realpathSync(process.cwd());
+let translationsDir = resolve(APP_ROOT, 'lib/locales');
 
 let token;
 let projectId;
