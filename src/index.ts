@@ -60,11 +60,19 @@ const loadTranslationFile = (language: string) => {
   }
 };
 
+const createJSON = (data) => {
+  const jsonData = JSON.stringify(data, null, 2);
+  return jsonData.replace(/[\u007f-\uffff]/g, (chr) => {
+    return '\\u' + ('0000' + chr.charCodeAt(0).toString(16)).substr(-4);
+  });
+};
+
 const writeTranslationFile = (language: string, data: any) => {
   const path = join(translationsDir, language, 'common.json');
   log(`Writing '${language}' translations to file: ${path}...`);
 
-  const jsonData = JSON.stringify(data, null, 2);
+  const jsonData = createJSON(data);
+
   try {
     fs.writeFileSync(path, jsonData);
   } catch (err) {
