@@ -2,7 +2,7 @@ import { join, resolve } from 'path';
 import * as fs from 'fs-extra';
 
 import * as poconnect from 'node-poeditor';
-import { differenceBy, uniqBy, xorBy } from 'lodash';
+import { assignWith, differenceBy, uniqBy, xorBy } from 'lodash';
 import axios from 'axios';
 import 'colors';
 import { realpathSync } from 'fs';
@@ -60,9 +60,9 @@ const loadTranslationFile = (language: string) => {
   }
 };
 
-const createJSON = (data) => {
+const createJSON = data => {
   const jsonData = JSON.stringify(data, null, 2);
-  return jsonData.replace(/[\u007f-\uffff]/g, (chr) => {
+  return jsonData.replace(/[\u007f-\uffff]/g, chr => {
     return '\\u' + ('0000' + chr.charCodeAt(0).toString(16)).substr(-4);
   });
 };
@@ -131,9 +131,21 @@ const TERMS_TEMPLATE = {
   comment: ''
 };
 
+interface Term {
+  term?: string;
+  definition?: string | {};
+};
+
 const mergeTerms = (data, newTerms?) => {
   return data.reduce((result, value) => {
-    const terms = uniqBy([...value.localTerms, ...value.remoteTerms], 'term');
+    const terms = assignWith(
+      value.localTerms,
+      value.remoteTerms,
+      (arrValue: Term = {}, othValue: Term = {}) => {
+        const matchesTerm = arrValue.term === othValue.term;
+        return othValue;
+      }
+    );
     const termsWithNewTerms = uniqBy([...terms, ...newTerms], 'term');
 
     const newValue = {
@@ -170,8 +182,7 @@ export const checkForChanges = async () => {
   const differentTerms =
     data.reduce(
       (result, value) =>
-        differenceBy(value.localTerms, value.remoteTerms, 'term').length +
-        result,
+        differenceBy(value.localTerms, value.remoteTerms, 'term').length + result,
       0
     ) > 0;
   const newTerms =
